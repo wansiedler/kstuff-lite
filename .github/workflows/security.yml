@@ -1,0 +1,63 @@
+name: Security
+on:
+  workflow_call:
+    inputs:
+      gate:
+        type: string
+        default: informational
+defaults:
+  run:
+    shell: bash
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          skip-dirs: freebsd-headers,ps5-kstuff/BearSSL,ps5-kstuff/libtomcrypt,ps5-kstuff/isa-l_crypto
+      - name: Upload SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        env:
+          GATE: ${{ inputs.gate }}
+        run: |
+          set -euo pipefail
+          version=8.21.2
+          curl -fsSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          rc=0
+          ./gitleaks detect --redact --no-banner --exit-code 1 || rc=$?
+          if [ "$rc" -ne 0 ] && [ "$GATE" != "blocking" ]; then
+            echo "::warning::gitleaks reported findings"
+            exit 0
+          fi
+          exit "$rc"
