@@ -16,19 +16,31 @@ jobs:
       contents: read
       security-events: write
       actions: read
+    env:
+      GATE: ${{ inputs.gate }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy.sarif
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          skip-dirs: freebsd-headers,ps5-kstuff/BearSSL,ps5-kstuff/libtomcrypt,ps5-kstuff/isa-l_crypto
+        run: |
+          set -euo pipefail
+          version=0.76.2
+          curl -fsSL -o trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${version}/trivy_${version}_Linux-64bit.tar.gz"
+          tar -xzf trivy.tar.gz trivy
+          exit_code=0
+          [ "$GATE" = "blocking" ] && exit_code=1
+          ./trivy fs . \
+            --scanners vuln \
+            --format sarif \
+            --output trivy.sarif \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            --exit-code "$exit_code" \
+            --skip-dirs freebsd-headers \
+            --skip-dirs ps5-kstuff/BearSSL \
+            --skip-dirs ps5-kstuff/libtomcrypt \
+            --skip-dirs ps5-kstuff/isa-l_crypto
       - name: Upload SARIF
         if: always()
         continue-on-error: true
