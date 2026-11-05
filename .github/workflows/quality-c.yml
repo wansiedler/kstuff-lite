@@ -1,0 +1,86 @@
+name: Quality — C
+on:
+  workflow_call:
+    inputs:
+      gate:
+        type: string
+        default: informational
+defaults:
+  run:
+    shell: bash
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve diff base
+        id: base
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=HEAD~1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: clang-format changed files
+        env:
+          BASE: ${{ steps.base.outputs.ref }}
+          GATE: ${{ inputs.gate }}
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$BASE"... \
+            | grep -E '\.(c|h|cpp|hpp|cc)$' \
+            | grep -vE '^(freebsd-headers|.*/(BearSSL|libtomcrypt|isa-l_crypto))/' || true)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No changed C/C++ files."
+            exit 0
+          fi
+          printf '%s\n' "${files[@]}"
+          rc=0
+          clang-format --dry-run --Werror "${files[@]}" || rc=$?
+          if [ "$rc" -ne 0 ] && [ "$GATE" != "blocking" ]; then
+            echo "::warning::clang-format reported issues"
+            exit 0
+          fi
+          exit "$rc"
+  cppcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cppcheck
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: cppcheck
+        env:
+          GATE: ${{ inputs.gate }}
+        run: |
+          set -euo pipefail
+          rc=0
+          cppcheck --enable=warning,portability,performance \
+            --inline-suppr --std=c11 --quiet --error-exitcode=2 \
+            -i freebsd-headers -i ps5-kstuff/BearSSL \
+            -i ps5-kstuff/libtomcrypt -i ps5-kstuff/isa-l_crypto \
+            prosper0gdb lib ps5-kstuff ps5-kstuff-ldr 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ] && [ "$GATE" != "blocking" ]; then
+            echo "::warning::cppcheck reported issues"
+            exit 0
+          fi
+          exit "$rc"

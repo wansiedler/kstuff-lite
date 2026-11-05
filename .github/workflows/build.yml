@@ -1,0 +1,49 @@
+name: Build
+on:
+  workflow_call:
+    inputs:
+      obs:
+        type: boolean
+        default: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  payload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+      KSTUFF_OBS: ${{ inputs.obs && '1' || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang-18 lld-18 xxd yasm nasm python3
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          wget -q https://github.com/ps5-payload-dev/pacbrew-repo/releases/latest/download/ps5-payload-dev.tar.gz
+          sudo tar xf ps5-payload-dev.tar.gz -C /
+      - name: Build
+        run: bash ci-ps5-kstuff-ldr.sh
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find . -path ./dist -prune -o \( -name 'kstuff.elf' -o -name 'payload.bin' -o -name 'debug-reader.*' \) -print -exec cp -v {} dist/ \;
+          test -n "$(ls -A dist)"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-kstuff-${{ inputs.obs && 'obs' || 'standard' }}
+          path: dist/
+          if-no-files-found: error
